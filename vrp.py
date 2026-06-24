@@ -235,15 +235,58 @@ def default_graph() -> list[Edge]:
     ]
 
 
-if __name__ == "__main__":
-    import sys
+def selftest() -> bool:
+    """Deterministic, no-network invariant check. Returns True iff every core VRP
+    invariant holds (routing, idempotent nonce, σ-honesty PLAN-by-default, value capture).
+    Raises AssertionError on any violation. Usable from CLI and from pytest."""
+    # universal address parse + reject
+    a = VAddr.parse("sol:7oDgMf")
+    assert a.rail == "sol" and a.ident == "7oDgMf"
+    for bad in ("noColon", "sol:", ":addr"):
+        try:
+            VAddr.parse(bad); assert False, bad
+        except ValueError:
+            pass
     k = VRPKernel(default_graph())
-    src = sys.argv[1] if len(sys.argv) > 1 else "evm:0xSenderUSDC"
-    dst = sys.argv[2] if len(sys.argv) > 2 else "sol:7oDgMfFRHyVVP7YQT6Kywe2Uj37rKWkpThFMpGQBzxyG"
-    amt = float(sys.argv[3]) if len(sys.argv) > 3 else 100.0
+    # least-cost multi-hop route across rails
+    r = k.route("usdc_evm:0xA", "sol:B", 100)
+    assert r.feasible, r.reason
+    rails = [h.edge.src for h in r.hops] + [r.hops[-1].edge.dst]
+    assert rails[0] == "usdc_evm" and rails[-1] == "sol"
+    assert r.cost_usd > 0 and r.finality_s > 0
+    # exactly-once: same intent → same nonce
+    r2 = k.route("usdc_evm:0xA", "sol:B", 100)
+    assert [h.nonce for h in r.hops] == [h.nonce for h in r2.hops]
+    # liquidity is respected (no partial/limbo route)
+    assert not k.route("usdc_evm:0xA", "sol:B", 10**12).feasible
+    # σ-honesty + NO-HARM: PLAN by default, nothing settles without confirm
+    out = k.execute(r)
+    assert out["state"] == "PLANNED" and out["ok"]
+    # value-capture primitive: fee earned per carried hop is positive
+    assert k._fee_earned(r) > 0
+    return True
+
+
+def main(argv=None) -> int:
+    import sys
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "selftest":
+        ok = selftest()
+        print(json.dumps({"selftest": "PASS" if ok else "FAIL"}))
+        return 0 if ok else 1
+    k = VRPKernel(default_graph())
+    src = argv[0] if len(argv) > 0 else "evm:0xSenderUSDC"
+    dst = argv[1] if len(argv) > 1 else "sol:7oDgMfFRHyVVP7YQT6Kywe2Uj37rKWkpThFMpGQBzxyG"
+    amt = float(argv[2]) if len(argv) > 2 else 100.0
     # map address rails to graph rails for the demo
     r = k.route("usdc_evm:" + src.split(":", 1)[1], "sol:" + dst.split(":", 1)[1], amt)
     print(json.dumps({"feasible": r.feasible, "reason": r.reason, "cost_usd": r.cost_usd,
                       "finality_s": r.finality_s,
                       "path": [f"{h.edge.src}->{h.edge.dst} (${h.amount_usd})" for h in r.hops],
                       "execute": k.execute(r)}, indent=1, default=str))
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())

@@ -2,7 +2,7 @@
 rollback, and the σ-honesty invariant (never fabricate an ACK; PLAN by default)."""
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
-from vrp import VRPKernel, Edge, VAddr, HopState, default_graph
+from vrp import VRPKernel, Edge, VAddr, HopState, default_graph, selftest, main
 
 
 def test_address_parse_and_reject():
@@ -98,6 +98,15 @@ def test_protocol_fee_scales_with_hops():
     k = VRPKernel(default_graph())
     r = k.route("usdc_evm:0xA", "sol:B", 1000)
     assert k._fee_earned(r) >= 1000 * k.PROTOCOL_FEE_BPS / 1e4 * 0.9   # ~fee per carried hop
+
+
+def test_selftest_passes():
+    # the in-module invariant check (also the `vrp selftest` CLI entrypoint) must be green
+    assert selftest() is True
+
+
+def test_cli_main_selftest_returns_zero():
+    assert main(["selftest"]) == 0
 
 
 if __name__ == "__main__":
